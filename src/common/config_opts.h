@@ -639,18 +639,23 @@ OPTION(rocksdb_wal_dir, OPT_STR, "")  //  rocksdb write ahead log file
 OPTION(rocksdb_info_log_level, OPT_STR, "info")  // info log level : debug , info , warn, error, fatal
 
 /**
- * osd_client_op_priority and osd_recovery_op_priority adjust the relative
- * priority of client io vs recovery io.
+ * osd_*_priority adjust the relative priority of client io, recovery io,
+ * snaptrim io, etc
  *
- * osd_client_op_priority/osd_recovery_op_priority determines the ratio of
- * available io between client and recovery.  Each option may be set between
+ * osd_*_priority determines the ratio of available io between client and
+ * recovery.  Each option may be set between
  * 1..63.
- *
- * osd_recovery_op_warn_multiple scales the normal warning threshhold,
- * osd_op_complaint_time, so that slow recovery ops won't cause noise
  */
 OPTION(osd_client_op_priority, OPT_U32, 63)
 OPTION(osd_recovery_op_priority, OPT_U32, 10)
+
+OPTION(osd_snap_trim_priority, OPT_U32, 5)
+OPTION(osd_snap_trim_cost, OPT_U32, 1<<20) // set default cost equal to 1MB io
+
+/**
+ * osd_recovery_op_warn_multiple scales the normal warning threshhold,
+ * osd_op_complaint_time, so that slow recovery ops won't cause noise
+ */
 OPTION(osd_recovery_op_warn_multiple, OPT_U32, 16)
 
 // Max time to wait between notifying mon of shutdown and shutting down

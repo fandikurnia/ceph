@@ -151,6 +151,10 @@ void PGQueueable::RunVis::operator()(OpRequestRef &op) {
   return osd->dequeue_op(pg, op, handle);
 }
 
+void PGQueueable::RunVis::operator()(PGSnapTrim &op) {
+  return pg->snap_trimmer(op.epoch_queued);
+}
+
 //Initial features in new superblock.
 //Features here are also automatically upgraded
 CompatSet OSD::get_osd_initial_compat_set() {
@@ -195,7 +199,6 @@ OSDService::OSDService(OSD *osd) :
   op_wq(osd->op_shardedwq),
   peering_wq(osd->peering_wq),
   recovery_wq(osd->recovery_wq),
-  snap_trim_wq(osd->snap_trim_wq),
   scrub_wq(osd->scrub_wq),
   scrub_finalize_wq(osd->scrub_finalize_wq),
   recovery_gen_wq("recovery_gen_wq", cct->_conf->osd_recovery_thread_timeout,
@@ -1558,7 +1561,6 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   recovery_ops_active(0),
   recovery_wq(this, cct->_conf->osd_recovery_thread_timeout, &recovery_tp),
   replay_queue_lock("OSD::replay_queue_lock"),
-  snap_trim_wq(this, cct->_conf->osd_snap_trim_thread_timeout, &disk_tp),
   scrub_wq(this, cct->_conf->osd_scrub_thread_timeout, &disk_tp),
   scrub_finalize_wq(cct->_conf->osd_scrub_finalize_thread_timeout, &osd_tp),
   remove_wq(store, cct->_conf->osd_remove_thread_timeout, &disk_tp),
