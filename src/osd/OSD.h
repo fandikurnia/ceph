@@ -305,18 +305,27 @@ typedef ceph::shared_ptr<DeletingState> DeletingStateRef;
 
 class OSD;
 
+struct PGScrub {
+  epoch_t epoch_queued;
+  PGScrub(epoch_t e) : epoch_queued(e) {}
+  ostream &operator<<(ostream &rhs) {
+    return rhs << "PGScrub";
+  }
+};
+
 struct PGSnapTrim {
   epoch_t epoch_queued;
   PGSnapTrim(epoch_t e) : epoch_queued(e) {}
   ostream &operator<<(ostream &rhs) {
-    return rhs << "SnapTrim";
+    return rhs << "PGSnapTrim";
   }
 };
 
 class PGQueueable {
   typedef boost::variant<
     OpRequestRef,
-    PGSnapTrim
+    PGSnapTrim,
+    PGScrub
     > QVariant;
   QVariant qvariant;
   int cost; 
@@ -331,6 +340,7 @@ class PGQueueable {
       : osd(osd), pg(pg), handle(handle) {}
     void operator()(OpRequestRef &op);
     void operator()(PGSnapTrim &op);
+    void operator()(PGScrub &op);
   };
 public:
   PGQueueable(OpRequestRef op)
@@ -341,6 +351,11 @@ public:
     {}
   PGQueueable(
     const PGSnapTrim &op, int cost, unsigned priority, utime_t start_time,
+    const entity_inst_t &owner)
+    : qvariant(op), cost(cost), priority(priority), start_time(start_time),
+      owner(owner) {}
+  PGQueueable(
+    const PGScrub &op, int cost, unsigned priority, utime_t start_time,
     const entity_inst_t &owner)
     : qvariant(op), cost(cost), priority(priority), start_time(start_time),
       owner(owner) {}
@@ -380,7 +395,6 @@ public:
   ShardedThreadPool::ShardedWQ < pair <PGRef, PGQueueable> > &op_wq;
   ThreadPool::BatchWorkQueue<PG> &peering_wq;
   ThreadPool::WorkQueue<PG> &recovery_wq;
-  ThreadPool::WorkQueue<PG> &scrub_wq;
   ThreadPool::WorkQueue<PG> &scrub_finalize_wq;
   GenContextWQ recovery_gen_wq;
   GenContextWQ op_gen_wq;
@@ -759,8 +773,16 @@ public:
 	  ceph_clock_now(cct),
 	  entity_inst_t())));
   }
-  bool queue_for_scrub(PG *pg) {
-    return scrub_wq.queue(pg);
+  void queue_for_scrub(PG *pg) {
+    op_wq.queue(
+      make_pair(
+	pg,
+	PGQueueable(
+	  PGScrub(pg->get_osdmap()->get_epoch()),
+	  cct->_conf->osd_scrub_cost,
+	  cct->_conf->osd_scrub_priority,
+	  ceph_clock_now(cct),
+	  entity_inst_t())));
   }
 
   // osd map cache (past osd maps)
@@ -2123,51 +2145,6 @@ protected:
   void sched_scrub();
   bool scrub_random_backoff();
   bool scrub_should_schedule();
-
-  xlist<PG*> scrub_queue;
-
-  struct ScrubWQ : public ThreadPool::WorkQueue<PG> {
-    OSD *osd;
-    ScrubWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<PG>("OSD::ScrubWQ", ti, 0, tp), osd(o) {}
-
-    bool _empty() {
-      return osd->scrub_queue.empty();
-    }
-    bool _enqueue(PG *pg) {
-      if (pg->scrub_item.is_on_list()) {
-	return false;
-      }
-      pg->get("ScrubWQ");
-      osd->scrub_queue.push_back(&pg->scrub_item);
-      return true;
-    }
-    void _dequeue(PG *pg) {
-      if (pg->scrub_item.remove_myself()) {
-	pg->put("ScrubWQ");
-      }
-    }
-    PG *_dequeue() {
-      if (osd->scrub_queue.empty())
-	return NULL;
-      PG *pg = osd->scrub_queue.front();
-      osd->scrub_queue.pop_front();
-      return pg;
-    }
-    void _process(
-      PG *pg,
-      ThreadPool::TPHandle &handle) {
-      pg->scrub(handle);
-      pg->put("ScrubWQ");
-    }
-    void _clear() {
-      while (!osd->scrub_queue.empty()) {
-	PG *pg = osd->scrub_queue.front();
-	osd->scrub_queue.pop_front();
-	pg->put("ScrubWQ");
-      }
-    }
-  } scrub_wq;
 
   struct ScrubFinalizeWQ : public ThreadPool::WorkQueue<PG> {
   private:

@@ -652,6 +652,10 @@ OPTION(osd_recovery_op_priority, OPT_U32, 10)
 OPTION(osd_snap_trim_priority, OPT_U32, 5)
 OPTION(osd_snap_trim_cost, OPT_U32, 1<<20) // set default cost equal to 1MB io
 
+OPTION(osd_scrub_priority, OPT_U32, 5)
+// set default cost equal to 50MB io
+OPTION(osd_scrub_cost, OPT_U32, 50<<20) 
+
 /**
  * osd_recovery_op_warn_multiple scales the normal warning threshhold,
  * osd_op_complaint_time, so that slow recovery ops won't cause noise
