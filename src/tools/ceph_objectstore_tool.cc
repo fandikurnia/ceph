@@ -1505,10 +1505,15 @@ int get_pg_metadata(ObjectStore *store, bufferlist &bl, metadata_section &ms, co
 	ms.osdmap.get_pg_num(ms.info.pgid.pgid.m_pool),
 	curmap.get_pg_num(ms.info.pgid.pgid.m_pool),
 	NULL)) {
-      // ms.past_intervals.clear();
-      // ms.map_epoch = sb.current_epoch;
-      cerr << "Import failed due to a split" << std::endl;
-      return EINVAL;    
+      ms.past_intervals.clear();
+      ms.map_epoch = sb.current_epoch;
+      // Replace map with the one corresponding to current_epoch
+      int r = add_osdmap(store, ms);
+      if (r) {
+        cerr << "Split occurred and can't get map for epoch " << sb.current_epoch;
+        return 1;
+      }
+      cerr << "WARNING: Split occurred, some objects may be ignored" << std::endl;
     }
   }
 
