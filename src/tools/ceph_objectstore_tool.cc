@@ -1507,12 +1507,8 @@ int get_pg_metadata(ObjectStore *store, bufferlist &bl, metadata_section &ms, co
 	NULL)) {
       ms.past_intervals.clear();
       ms.map_epoch = sb.current_epoch;
-      // Replace map with the one corresponding to current_epoch
-      int r = add_osdmap(store, ms);
-      if (r) {
-        cerr << "Split occurred and can't get map for epoch " << sb.current_epoch;
-        return 1;
-      }
+      // Don't need to write already existing osdmap
+      ms.osdmap.set_epoch(0);
       cerr << "WARNING: Split occurred, some objects may be ignored" << std::endl;
     }
   }
@@ -1776,6 +1772,8 @@ int do_import(ObjectStore *store, OSDSuperblock& sb)
   }
 
   t = new ObjectStore::Transaction;
+  // XXX: If there is an osdmap (get_epoch() == ms.map_epoch)
+  // we should write it here to make sure it is available
   ret = write_pg(*t, ms.map_epoch, ms.info, ms.log, ms.struct_ver, ms.past_intervals);
   if (ret) return ret;
 
