@@ -2800,7 +2800,7 @@ void ReplicatedPG::snap_trimmer(epoch_t queued)
   } else {
     lock();
   }
-  if (deleting || pg_has_reset_since(queued)) {
+  if (pg_has_reset_since(queued)) {
     unlock();
     return;
   }
@@ -9237,7 +9237,7 @@ void ReplicatedPG::_applied_recovered_object(ObjectContextRef obc)
   --active_pushes;
 
   // requeue an active chunky scrub waiting on recovery ops
-  if (!deleting && active_pushes == 0
+  if (!is_deleting() && active_pushes == 0
       && scrubber.is_chunky_scrub_active()) {
     requeue_scrub();
   }
@@ -9254,7 +9254,7 @@ void ReplicatedPG::_applied_recovered_object_replica()
   --active_pushes;
 
   // requeue an active chunky scrub waiting on recovery ops
-  if (!deleting && active_pushes == 0 &&
+  if (!is_deleting() && active_pushes == 0 &&
       scrubber.active_rep_scrub && static_cast<MOSDRepScrub*>(
 	scrubber.active_rep_scrub->get_req())->chunky) {
     osd->op_wq.queue(
@@ -9615,7 +9615,7 @@ void ReplicatedPG::_finish_mark_all_unfound_lost(list<ObjectContextRef>& obcs)
   lock();
   dout(10) << "_finish_mark_all_unfound_lost " << dendl;
 
-  if (!deleting)
+  if (!is_deleting())
     requeue_ops(waiting_for_all_missing);
   waiting_for_all_missing.clear();
 
@@ -9735,7 +9735,7 @@ void ReplicatedPG::on_shutdown()
   osd->peering_wq.dequeue(this);
 
   // handles queue races
-  deleting = true;
+  set_deleting();
 
   unreg_next_scrub();
   cancel_copy_ops(false);
@@ -11467,7 +11467,7 @@ bool ReplicatedPG::agent_work(int start_max)
     return true;
   }
 
-  assert(!deleting);
+  assert(!is_deleting());
 
   if (agent_state->is_idle()) {
     dout(10) << __func__ << " idle, stopping" << dendl;

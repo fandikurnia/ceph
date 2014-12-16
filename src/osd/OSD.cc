@@ -7732,7 +7732,7 @@ void OSD::do_recovery(PG *pg, epoch_t queued, ThreadPool::TPHandle &handle)
   } else {
     pg->lock_suspend_timeout(handle);
     if (pg->pg_has_reset_since(queued) ||
-	pg->deleting || !(pg->is_active() && pg->is_primary())) {
+	!(pg->is_active() && pg->is_primary())) {
       pg->unlock();
       goto out;
     }
@@ -8260,7 +8260,7 @@ void OSD::dequeue_op(
     }
   }
 
-  if (pg->deleting)
+  if (pg->is_deleting())
     return;
 
   op->mark_reached_pg();
@@ -8289,7 +8289,7 @@ struct C_CompleteSplits : public Context {
       osd->pg_map_lock.get_write();
       (*i)->lock();
       osd->add_newly_split_pg(&**i, &rctx);
-      if (!((*i)->deleting)) {
+      if (!((*i)->is_deleting())) {
         to_complete.insert((*i)->info.pgid);
         osd->service.complete_split(to_complete);
       }
@@ -8322,7 +8322,7 @@ void OSD::process_peering_events(
     PG *pg = *i;
     pg->lock_suspend_timeout(handle);
     curmap = service.get_osdmap();
-    if (pg->deleting) {
+    if (pg->is_deleting()) {
       pg->unlock();
       continue;
     }

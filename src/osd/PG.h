@@ -246,8 +246,6 @@ protected:
 #endif
 
 public:
-  bool deleting;  // true while in removing or OSD is shutting down
-
 
   void lock_suspend_timeout(ThreadPool::TPHandle &handle);
   void lock(bool no_lockdep = false);
@@ -622,8 +620,6 @@ protected:
   // primary-only, recovery-only state
   set<pg_shard_t> might_have_unfound;  // These osds might have objects on them
                                        // which are unfound on the primary
-  epoch_t last_peering_reset;
-
 
   /* heartbeat peers */
   void set_probe_targets(const set<pg_shard_t> &probe_set);
@@ -2001,7 +1997,33 @@ public:
   const spg_t pg_id;
   uint64_t peer_features;
 
+  mutable Mutex last_peering_reset_lock; // protects last_peering_rest and deleting
+  epoch_t last_peering_reset;
+  bool _deleting;  // true while in removing or OSD is shutting down
  public:
+  void set_last_peering_reset();
+  bool pg_has_reset_since(epoch_t e) {
+    Mutex::Locker l(last_peering_reset_lock);
+    assert(is_locked());
+    return _deleting || e < get_last_peering_reset();
+  }
+  epoch_t get_last_peering_reset() const {
+    Mutex::Locker l(last_peering_reset_lock);
+    return last_peering_reset;
+  }
+  void set_deleting() {
+    Mutex::Locker l(last_peering_reset_lock);
+    _deleting = true;
+  }
+  void unset_deleting() {
+    Mutex::Locker l(last_peering_reset_lock);
+    _deleting = false;
+  }
+  bool is_deleting() {
+    Mutex::Locker l(last_peering_reset_lock);
+    return _deleting;
+  }
+
   const spg_t&      get_pgid() const { return pg_id; }
   int        get_nrep() const { return acting.size(); }
 
@@ -2054,8 +2076,6 @@ public:
   bool       is_primary() const { return pg_whoami == primary; }
   bool       is_replica() const { return role > 0; }
 
-  epoch_t get_last_peering_reset() const { return last_peering_reset; }
-  
   //int  get_state() const { return state; }
   bool state_test(int m) const { return (state & m) != 0; }
   void state_set(int m) { state |= m; }
@@ -2157,11 +2177,6 @@ public:
   void start_flush(ObjectStore::Transaction *t,
 		   list<Context *> *on_applied,
 		   list<Context *> *on_safe);
-  void set_last_peering_reset();
-  bool pg_has_reset_since(epoch_t e) {
-    assert(is_locked());
-    return deleting || e < get_last_peering_reset();
-  }
 
   void update_history_from_master(pg_history_t new_history);
   void fulfill_info(pg_shard_t from, const pg_query_t &query,
