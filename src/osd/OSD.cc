@@ -160,7 +160,6 @@ void PGQueueable::RunVis::operator()(PGScrub &op) {
 }
 
 void PGQueueable::RunVis::operator()(PGRecovery &op) {
-  /// TODO: need to handle paused recovery
   return osd->do_recovery(pg.get(), op.epoch_queued, handle);
 }
 
@@ -254,7 +253,10 @@ OSDService::OSDService(OSD *osd) :
   epoch_lock("OSDService::epoch_lock"),
   boot_epoch(0), up_epoch(0), bind_epoch(0),
   is_stopping_lock("OSDService::is_stopping_lock"),
-  state(NOT_STOPPING)
+  state(NOT_STOPPING),
+  recovery_lock("OSD::recovery_lock"),
+  paused_recovery(false),
+  recovery_ops_active(0)
 #ifdef PG_DEBUG_REFS
   , pgid_lock("OSDService::pgid_lock")
 #endif
@@ -1524,7 +1526,6 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
     cct->_conf->osd_op_num_threads_per_shard * cct->_conf->osd_op_num_shards),
   disk_tp(cct, "OSD::disk_tp", cct->_conf->osd_disk_threads, "osd_disk_threads"),
   command_tp(cct, "OSD::command_tp", 1),
-  paused_recovery(false),
   session_waiting_lock("OSD::session_waiting_lock"),
   heartbeat_lock("OSD::heartbeat_lock"),
   heartbeat_stop(false), heartbeat_update_lock("OSD::heartbeat_update_lock"),
@@ -1553,8 +1554,6 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   osd_stat_updated(false),
   pg_stat_tid(0), pg_stat_tid_flushed(0),
   command_wq(this, cct->_conf->osd_command_thread_timeout, &command_tp),
-  recovery_lock("OSD::recovery_lock"),
-  recovery_ops_active(0),
   replay_queue_lock("OSD::replay_queue_lock"),
   scrub_finalize_wq(cct->_conf->osd_scrub_finalize_thread_timeout, &osd_tp),
   remove_wq(store, cct->_conf->osd_remove_thread_timeout, &disk_tp),
@@ -2246,6 +2245,7 @@ int OSD::shutdown()
       p->second->osr->flush();
     }
   }
+  service.check_blocked_recovery_ops();
   
   // finish ops
   op_shardedwq.drain(); // should already be empty except for lagard PGs
@@ -3843,6 +3843,8 @@ void OSD::tick()
   assert(osd_lock.is_locked());
   dout(5) << "tick" << dendl;
 
+  service.check_blocked_recovery_ops();
+
   logger->set(l_osd_buf, buffer::get_total_alloc());
 
   if (is_active() || is_waiting_for_healthy()) {
@@ -5171,9 +5173,7 @@ void OSD::do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, buffe
     cct->_conf->apply_changes(NULL);
     ss << "kicking recovery queue. set osd_recovery_delay_start "
        << "to " << cct->_conf->osd_recovery_delay_start;
-    defer_recovery_until = ceph_clock_now(cct);
-    defer_recovery_until += cct->_conf->osd_recovery_delay_start;
-    /// TODO
+    service.reset_defer_recovery_until(delay);
   }
 
   else if (prefix == "cpu_profiler") {
@@ -6570,19 +6570,12 @@ void OSD::activate_map()
     osdmap_subscribe(osdmap->get_epoch() + 1, true);
   }
 
-  // norecover?
   if (osdmap->test_flag(CEPH_OSDMAP_NORECOVER)) {
-    if (!paused_recovery) {
-      dout(1) << "pausing recovery (NORECOVER flag set)" << dendl;
-      paused_recovery = true;
-      /// TODO
-    }
+    dout(1) << "pausing recovery (NORECOVER flag set)" << dendl;
+    service.recovery_pause();
   } else {
-    if (paused_recovery) {
-      dout(1) << "resuming recovery (NORECOVER flag cleared)" << dendl;
-      /// TODO
-      paused_recovery = false;
-    }
+    dout(1) << "pausing recovery (NORECOVER flag set)" << dendl;
+    service.recovery_unpause();
   }
 
   service.activate_map();
@@ -7694,36 +7687,13 @@ void OSD::check_replay_queue()
   }
 }
 
-bool OSD::_recover_now()
-{
-  if (recovery_ops_active >= cct->_conf->osd_recovery_max_active) {
-    dout(15) << "_recover_now active " << recovery_ops_active
-	     << " >= max " << cct->_conf->osd_recovery_max_active << dendl;
-    return false;
-  }
-  if (ceph_clock_now(cct) < defer_recovery_until) {
-    dout(15) << "_recover_now defer until " << defer_recovery_until << dendl;
-    return false;
-  }
-
-  return true;
-}
-
 void OSD::do_recovery(PG *pg, epoch_t queued, ThreadPool::TPHandle &handle)
 {
   // see how many we should try to start.  note that this is a bit racy.
-  recovery_lock.Lock();
-  int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active,
-      cct->_conf->osd_recovery_max_single_start);
-  if (max > 0) {
-    dout(10) << "do_recovery can start " << max << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active
-	     << " rops)" << dendl;
-    recovery_ops_active += max;  // take them now, return them if we don't use them.
-  } else {
-    dout(10) << "do_recovery can start 0 (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active
-	     << " rops)" << dendl;
-  }
-  recovery_lock.Unlock();
+  int max = service.recovery_reserve_max_ops();
+  dout(10) << "do_recovery can start " << max << " / "
+	   << cct->_conf->osd_recovery_max_active
+	   << " rops" << dendl;
 
   if (max <= 0) {
     dout(10) << "do_recovery raced and failed to start anything; requeuing " << *pg << dendl;
@@ -7774,17 +7744,12 @@ void OSD::do_recovery(PG *pg, epoch_t queued, ThreadPool::TPHandle &handle)
   }
 
  out:
-  recovery_lock.Lock();
-  if (max > 0) {
-    assert(recovery_ops_active >= max);
-    recovery_ops_active -= max;
-  }
-  recovery_lock.Unlock();
+  service.recovery_unreserve_ops(max);
 }
 
-void OSD::start_recovery_op(PG *pg, const hobject_t& soid)
+void OSDService::start_recovery_op(PG *pg, const hobject_t& soid)
 {
-  recovery_lock.Lock();
+  Mutex::Locker l(recovery_lock);
   dout(10) << "start_recovery_op " << *pg << " " << soid
 	   << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active << " rops)"
 	   << dendl;
@@ -7800,9 +7765,9 @@ void OSD::start_recovery_op(PG *pg, const hobject_t& soid)
   recovery_lock.Unlock();
 }
 
-void OSD::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
+void OSDService::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
 {
-  recovery_lock.Lock();
+  Mutex::Locker l(recovery_lock);
   dout(10) << "finish_recovery_op " << *pg << " " << soid
 	   << " dequeue=" << dequeue
 	   << " (" << recovery_ops_active << "/" << cct->_conf->osd_recovery_max_active << " rops)"
@@ -7817,8 +7782,6 @@ void OSD::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
   assert(recovery_oids[pg->info.pgid].count(soid));
   recovery_oids[pg->info.pgid].erase(soid);
 #endif
-
-  recovery_lock.Unlock();
 }
 
 // =========================================================

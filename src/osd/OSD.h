@@ -776,21 +776,7 @@ public:
   void send_pg_temp();
 
   void queue_for_peering(PG *pg);
-  void queue_for_recovery(PG *pg, bool front = false) {
-    pair<PGRef, PGQueueable> to_queue = make_pair(
-      pg,
-      PGQueueable(
-	PGRecovery(pg->get_osdmap()->get_epoch()),
-	cct->_conf->osd_recovery_cost,
-	cct->_conf->osd_recovery_priority,
-	ceph_clock_now(cct),
-	entity_inst_t()));
-    if (front) {
-      op_wq.queue_front(to_queue);
-    } else {
-      op_wq.queue(to_queue);
-    }
-  }
+
   void queue_for_snap_trim(PG *pg) {
     op_wq.queue(
       make_pair(
@@ -959,6 +945,108 @@ public:
   bool prepare_to_stop();
   void got_stop_ack();
 
+  // -- pg recovery --
+  Mutex recovery_lock;
+  utime_t defer_recovery_until;
+  bool paused_recovery;
+  int recovery_ops_active;
+  list<pair<PGRef, PGRecovery> > blocked_recovery_ops;
+#ifdef DEBUG_RECOVERY_OIDS
+  map<spg_t, set<hobject_t> > recovery_oids;
+#endif
+
+  void _queue_for_recovery(
+    pair<PGRef, PGRecovery> in, bool front) {
+    pair<PGRef, PGQueueable> to_queue = make_pair(
+      in.first,
+      PGQueueable(
+	in.second,
+	cct->_conf->osd_recovery_cost,
+	cct->_conf->osd_recovery_priority,
+	ceph_clock_now(cct),
+	entity_inst_t()));
+    if (front) {
+      op_wq.queue_front(to_queue);
+    } else {
+      op_wq.queue(to_queue);
+    }
+  }
+private:
+  void _check_blocked_recovery_ops() {
+    assert(recovery_lock.is_locked_by_me());
+    for (list<pair<PGRef, PGRecovery> >::iterator i = blocked_recovery_ops.begin();
+	 i != blocked_recovery_ops.end();
+	 ) {
+      if (i->first->pg_has_reset_since(i->second.epoch_queued)) {
+	blocked_recovery_ops.erase(i++);
+      } else {
+	++i;
+      }
+    }
+    if (defer_recovery_until >= ceph_clock_now(cct) &&
+	!paused_recovery) {
+      for (list<pair<PGRef, PGRecovery> >::iterator i =
+	     blocked_recovery_ops.begin();
+	   i != blocked_recovery_ops.end();
+	   ++i) {
+	_queue_for_recovery(*i, false);
+      }
+      blocked_recovery_ops.clear();
+    }
+  }
+public:
+  void check_blocked_recovery_ops() {
+    Mutex::Locker l(recovery_lock);
+    _check_blocked_recovery_ops();
+  }
+  void reset_defer_recovery_until(int64_t delay) {
+    Mutex::Locker l(recovery_lock);
+    defer_recovery_until = ceph_clock_now(cct);
+    defer_recovery_until += cct->_conf->osd_recovery_delay_start;
+    _check_blocked_recovery_ops();
+  }
+  void queue_for_recovery(PG *pg, bool front = false) {
+    Mutex::Locker l(recovery_lock);
+    pair<PGRef, PGRecovery> to_queue = make_pair(
+      pg,
+      PGRecovery(pg->get_osdmap()->get_epoch()));
+    if (defer_recovery_until > ceph_clock_now(cct) ||
+	paused_recovery ||
+	!blocked_recovery_ops.empty()) {
+      blocked_recovery_ops.push_back(to_queue);
+    } else {
+      _queue_for_recovery(to_queue, front);
+    }
+  }
+  void recovery_pause() {
+    Mutex::Locker l(recovery_lock);
+    if (!paused_recovery) {
+      paused_recovery = true;
+      _check_blocked_recovery_ops();
+    }
+  }
+  void recovery_unpause() {
+    Mutex::Locker l(recovery_lock);
+    if (paused_recovery) {
+      paused_recovery = false;
+      _check_blocked_recovery_ops();
+    }
+  }
+
+  void start_recovery_op(PG *pg, const hobject_t& soid);
+  void finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue);
+
+  int recovery_reserve_max_ops() {
+    Mutex::Locker l(recovery_lock);
+    int max = MIN(cct->_conf->osd_recovery_max_active - recovery_ops_active,
+		  cct->_conf->osd_recovery_max_single_start);
+    recovery_ops_active += max;  // take them now, return them if we don't use them.
+    return 0;
+  }
+  void recovery_unreserve_ops(int unreserve) {
+    Mutex::Locker l(recovery_lock);
+    recovery_ops_active -= unreserve;
+  }
 
 #ifdef PG_DEBUG_REFS
   Mutex pgid_lock;
@@ -1193,8 +1281,6 @@ private:
   ShardedThreadPool osd_op_tp;
   ThreadPool disk_tp;
   ThreadPool command_tp;
-
-  bool paused_recovery;
 
   void set_disk_tp_priority();
 
@@ -2107,18 +2193,7 @@ protected:
   void handle_command(class MCommand *m);
   void do_command(Connection *con, ceph_tid_t tid, vector<string>& cmd, bufferlist& data);
 
-  // -- pg recovery --
-  Mutex recovery_lock;
-  utime_t defer_recovery_until;
-  int recovery_ops_active;
-#ifdef DEBUG_RECOVERY_OIDS
-  map<spg_t, set<hobject_t> > recovery_oids;
-#endif
-
-  void start_recovery_op(PG *pg, const hobject_t& soid);
-  void finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue);
   void do_recovery(PG *pg, epoch_t epoch_queued, ThreadPool::TPHandle &handle);
-  bool _recover_now();
 
   // replay / delayed pg activation
   Mutex replay_queue_lock;
