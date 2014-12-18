@@ -3205,6 +3205,8 @@ void PG::_request_scrub_map(
     spg_t(info.pgid.pgid, replica.shard), version,
     get_osdmap()->get_epoch(),
     start, end, deep);
+  // default priority, we want the rep scrub processed prior to any recovery
+  // or client io messages (we are holding a lock!)
   osd->send_message_osd_cluster(
     replica.osd, repscrubop, get_osdmap()->get_epoch());
 }
@@ -3610,9 +3612,10 @@ void PG::repair_object(
  * scrubmap of objects that are in the range [msg->start, msg->end).
  */
 void PG::replica_scrub(
-  MOSDRepScrub *msg,
+  OpRequestRef op,
   ThreadPool::TPHandle &handle)
 {
+  MOSDRepScrub *msg = static_cast<MOSDRepScrub *>(op->get_req());
   assert(!scrubber.active_rep_scrub);
   dout(7) << "replica_scrub" << dendl;
 
@@ -3628,15 +3631,14 @@ void PG::replica_scrub(
   assert(msg->chunky);
   if (last_update_applied < msg->scrub_to) {
     dout(10) << "waiting for last_update_applied to catch up" << dendl;
-    scrubber.active_rep_scrub = msg;
+    scrubber.active_rep_scrub = op;
     msg->get();
     return;
   }
 
   if (active_pushes > 0) {
     dout(10) << "waiting for active pushes to finish" << dendl;
-    scrubber.active_rep_scrub = msg;
-    msg->get();
+    scrubber.active_rep_scrub = op;
     return;
   }
 

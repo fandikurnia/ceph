@@ -194,7 +194,6 @@ OSDService::OSDService(OSD *osd) :
   snap_trim_wq(osd->snap_trim_wq),
   scrub_wq(osd->scrub_wq),
   scrub_finalize_wq(osd->scrub_finalize_wq),
-  rep_scrub_wq(osd->rep_scrub_wq),
   recovery_gen_wq("recovery_gen_wq", cct->_conf->osd_recovery_thread_timeout,
 		  &osd->recovery_tp),
   op_gen_wq("op_gen_wq", cct->_conf->osd_recovery_thread_timeout, &osd->osd_tp),
@@ -1558,7 +1557,6 @@ OSD::OSD(CephContext *cct_, ObjectStore *store_,
   snap_trim_wq(this, cct->_conf->osd_snap_trim_thread_timeout, &disk_tp),
   scrub_wq(this, cct->_conf->osd_scrub_thread_timeout, &disk_tp),
   scrub_finalize_wq(cct->_conf->osd_scrub_finalize_thread_timeout, &osd_tp),
-  rep_scrub_wq(this, cct->_conf->osd_scrub_thread_timeout, &disk_tp),
   remove_wq(store, cct->_conf->osd_remove_thread_timeout, &disk_tp),
   next_removal_seq(0),
   service(this)
@@ -5588,7 +5586,6 @@ void OSD::dispatch_op(OpRequestRef op)
   case MSG_OSD_PG_CREATE:
     handle_pg_create(op);
     break;
-
   case MSG_OSD_PG_NOTIFY:
     handle_pg_notify(op);
     break;
@@ -5681,6 +5678,8 @@ bool OSD::dispatch_op_fast(OpRequestRef& op, OSDMapRef& osdmap)
   case MSG_OSD_EC_READ_REPLY:
     handle_replica_op<MOSDECSubOpReadReply, MSG_OSD_EC_READ_REPLY>(op, osdmap);
     break;
+  case MSG_OSD_REP_SCRUB:
+    handle_replica_op<MOSDRepScrub, MSG_OSD_REP_SCRUB>(op, osdmap);
   default:
     assert(0);
   }
@@ -5725,10 +5724,6 @@ void OSD::_dispatch(Message *m)
     handle_scrub(static_cast<MOSDScrub*>(m));
     break;
 
-  case MSG_OSD_REP_SCRUB:
-    handle_rep_scrub(static_cast<MOSDRepScrub*>(m));
-    break;
-
     // -- need OSDMap --
 
   default:
@@ -5749,26 +5744,6 @@ void OSD::_dispatch(Message *m)
 
   logger->set(l_osd_buf, buffer::get_total_alloc());
 
-}
-
-void OSD::handle_rep_scrub(MOSDRepScrub *m)
-{
-  dout(10) << __func__ << " " << *m << dendl;
-  if (!require_self_aliveness(m, m->map_epoch)) {
-    m->put();
-    return;
-  }
-  if (!require_osd_peer(m)) {
-    m->put();
-    return;
-  }
-  if (osdmap->get_epoch() >= m->map_epoch &&
-      !require_same_peer_instance(m, osdmap, true)) {
-    m->put();
-    return;
-  }
-
-  rep_scrub_wq.queue(m);
 }
 
 void OSD::handle_scrub(MOSDScrub *m)

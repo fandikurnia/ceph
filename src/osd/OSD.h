@@ -329,7 +329,6 @@ public:
   ThreadPool::WorkQueue<PG> &snap_trim_wq;
   ThreadPool::WorkQueue<PG> &scrub_wq;
   ThreadPool::WorkQueue<PG> &scrub_finalize_wq;
-  ThreadPool::WorkQueue<MOSDRepScrub> &rep_scrub_wq;
   GenContextWQ recovery_gen_wq;
   GenContextWQ op_gen_wq;
   ClassHandler  *&class_handler;
@@ -2179,61 +2178,6 @@ protected:
     }
   } scrub_finalize_wq;
 
-  struct RepScrubWQ : public ThreadPool::WorkQueue<MOSDRepScrub> {
-  private: 
-    OSD *osd;
-    list<MOSDRepScrub*> rep_scrub_queue;
-
-  public:
-    RepScrubWQ(OSD *o, time_t ti, ThreadPool *tp)
-      : ThreadPool::WorkQueue<MOSDRepScrub>("OSD::RepScrubWQ", ti, 0, tp), osd(o) {}
-
-    bool _empty() {
-      return rep_scrub_queue.empty();
-    }
-    bool _enqueue(MOSDRepScrub *msg) {
-      rep_scrub_queue.push_back(msg);
-      return true;
-    }
-    void _dequeue(MOSDRepScrub *msg) {
-      assert(0); // Not applicable for this wq
-      return;
-    }
-    MOSDRepScrub *_dequeue() {
-      if (rep_scrub_queue.empty())
-	return NULL;
-      MOSDRepScrub *msg = rep_scrub_queue.front();
-      rep_scrub_queue.pop_front();
-      return msg;
-    }
-    void _process(
-      MOSDRepScrub *msg,
-      ThreadPool::TPHandle &handle) {
-      osd->osd_lock.Lock();
-      if (osd->is_stopping()) {
-	osd->osd_lock.Unlock();
-	return;
-      }
-      if (osd->_have_pg(msg->pgid)) {
-	PG *pg = osd->_lookup_lock_pg(msg->pgid);
-	osd->osd_lock.Unlock();
-	pg->replica_scrub(msg, handle);
-	msg->put();
-	pg->unlock();
-      } else {
-	msg->put();
-	osd->osd_lock.Unlock();
-      }
-    }
-    void _clear() {
-      while (!rep_scrub_queue.empty()) {
-	MOSDRepScrub *msg = rep_scrub_queue.front();
-	rep_scrub_queue.pop_front();
-	msg->put();
-      }
-    }
-  } rep_scrub_wq;
-
   // -- removing --
   struct RemoveWQ :
     public ThreadPool::WorkQueueVal<pair<PGRef, DeletingStateRef> > {
@@ -2288,6 +2232,7 @@ protected:
     case MSG_OSD_EC_WRITE_REPLY:
     case MSG_OSD_EC_READ:
     case MSG_OSD_EC_READ_REPLY:
+    case MSG_OSD_REP_SCRUB:
       return true;
     default:
       return false;
@@ -2355,7 +2300,6 @@ public:
 
   void handle_signal(int signum);
 
-  void handle_rep_scrub(MOSDRepScrub *m);
   void handle_scrub(struct MOSDScrub *m);
   void handle_osd_ping(class MOSDPing *m);
   void handle_op(OpRequestRef& op, OSDMapRef& osdmap);
