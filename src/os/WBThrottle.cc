@@ -140,12 +140,13 @@ bool WBThrottle::get_next_should_flush(
          pending_wbs.size() < fd_limits.first &&
          cur_size < size_limits.first)
          cond.Wait(lock);
+
   if (stopping)
     return false;
   assert(!pending_wbs.empty());
   ghobject_t obj(pop_object());
   
-  map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
     pending_wbs.find(obj);
   *next = boost::make_tuple(obj, i->second.second, i->second.first);
   pending_wbs.erase(i);
@@ -166,7 +167,7 @@ void *WBThrottle::entry()
     ::fsync(**wb.get<1>());
 #endif
 #ifdef HAVE_POSIX_FADVISE
-    if (wb.get<2>().nocache) {
+    if (g_conf->filestore_fadvise && wb.get<2>().nocache) {
       int fa_r = posix_fadvise(**wb.get<1>(), 0, 0, POSIX_FADV_DONTNEED);
       assert(fa_r == 0);
     }
@@ -175,9 +176,12 @@ void *WBThrottle::entry()
     clearing = ghobject_t();
     cur_ios -= wb.get<2>().ios;
     logger->dec(l_wbthrottle_ios_dirtied, wb.get<2>().ios);
+    logger->inc(l_wbthrottle_ios_wb, wb.get<2>().ios);
     cur_size -= wb.get<2>().size;
     logger->dec(l_wbthrottle_bytes_dirtied, wb.get<2>().size);
+    logger->inc(l_wbthrottle_bytes_wb, wb.get<2>().size);
     logger->dec(l_wbthrottle_inodes_dirtied);
+    logger->inc(l_wbthrottle_inodes_wb);
     cond.Signal();
     wb = boost::tuple<ghobject_t, FDRef, PendingWB>();
   }
@@ -189,7 +193,7 @@ void WBThrottle::queue_wb(
   bool nocache)
 {
   Mutex::Locker l(lock);
-  map<ghobject_t, pair<PendingWB, FDRef> >::iterator wbiter =
+  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator wbiter =
     pending_wbs.find(hoid);
   if (wbiter == pending_wbs.end()) {
     wbiter = pending_wbs.insert(
@@ -209,16 +213,23 @@ void WBThrottle::queue_wb(
 
   wbiter->second.first.add(nocache, len, 1);
   insert_object(hoid);
-  cond.Signal();
+  cond.Signal(); 
 }
 
 void WBThrottle::clear()
 {
   Mutex::Locker l(lock);
-  for (map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  for (ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
 	 pending_wbs.begin();
        i != pending_wbs.end();
        ++i) {
+#ifdef HAVE_POSIX_FADVISE
+    if (g_conf->filestore_fadvise && i->second.first.nocache) {
+      int fa_r = posix_fadvise(**i->second.second, 0, 0, POSIX_FADV_DONTNEED);
+      assert(fa_r == 0);
+    }
+#endif
+
     cur_ios -= i->second.first.ios;
     logger->dec(l_wbthrottle_ios_dirtied, i->second.first.ios);
     cur_size -= i->second.first.size;
@@ -228,15 +239,17 @@ void WBThrottle::clear()
   pending_wbs.clear();
   lru.clear();
   rev_lru.clear();
+
   cond.Signal();
 }
 
 void WBThrottle::clear_object(const ghobject_t &hoid)
 {
   Mutex::Locker l(lock);
-  while (clearing == hoid)
+  while (clearing == hoid) {
     cond.Wait(lock);
-  map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
+  }
+  ceph::unordered_map<ghobject_t, pair<PendingWB, FDRef> >::iterator i =
     pending_wbs.find(hoid);
   if (i == pending_wbs.end())
     return;
@@ -257,7 +270,6 @@ void WBThrottle::throttle()
   while (!stopping && !(
 	   cur_ios < io_limits.second &&
 	   pending_wbs.size() < fd_limits.second &&
-	   cur_size < size_limits.second)) {
+	   cur_size < size_limits.second))
     cond.Wait(lock);
-  }
 }

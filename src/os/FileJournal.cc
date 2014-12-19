@@ -156,8 +156,10 @@ int FileJournal::_open_block_device()
   /* block devices have to write in blocks of CEPH_PAGE_SIZE */
   block_size = CEPH_PAGE_SIZE;
 
-  discard = block_device_support_discard(fn.c_str());
-  dout(10) << fn << " support discard: " << (int)discard << dendl;
+  if (g_conf->journal_discard) {
+    discard = block_device_support_discard(fn.c_str());
+    dout(10) << fn << " support discard: " << (int)discard << dendl;
+  }
   _check_disk_write_cache();
   return 0;
 }
@@ -913,7 +915,7 @@ int FileJournal::prepare_single_write(bufferlist& bl, off64_t& queue_pos, uint64
     bufferptr bp = buffer::create_static(pre_pad, zero_buf);
     bl.push_back(bp);
   }
-  bl.claim_append(ebl);
+  bl.claim_append(ebl, buffer::list::CLAIM_ALLOW_NONSHAREABLE); // potential zero-copy
 
   if (h.post_pad) {
     bufferptr bp = buffer::create_static(post_pad, zero_buf);
@@ -1470,8 +1472,9 @@ void FileJournal::submit_entry(uint64_t seq, bufferlist& e, int alignment,
     completions.push_back(
       completion_item(
 	seq, oncommit, ceph_clock_now(g_ceph_context), osd_op));
+    if (writeq.empty())
+      writeq_cond.Signal();
     writeq.push_back(write_item(seq, e, alignment, osd_op));
-    writeq_cond.Signal();
   }
 }
 
@@ -1586,7 +1589,7 @@ void FileJournal::committed_thru(uint64_t seq)
     header.start_seq = seq + 1;
   }
 
-  if (g_conf->journal_discard && discard) {
+  if (discard) {
     dout(10) << __func__  << " will trim (" << old_start << ", " << header.start << ")" << dendl;
     if (old_start < header.start)
       do_discard(old_start, header.start - 1);

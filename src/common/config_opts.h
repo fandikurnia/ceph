@@ -128,6 +128,8 @@ OPTION(ms_dispatch_throttle_bytes, OPT_U64, 100 << 20)
 OPTION(ms_bind_ipv6, OPT_BOOL, false)
 OPTION(ms_bind_port_min, OPT_INT, 6800)
 OPTION(ms_bind_port_max, OPT_INT, 7300)
+OPTION(ms_bind_retry_count, OPT_INT, 3) // If binding fails, how many times do we retry to bind
+OPTION(ms_bind_retry_delay, OPT_INT, 5) // Delay between attemps to bind
 OPTION(ms_rwthread_stack_bytes, OPT_U64, 1024 << 10)
 OPTION(ms_tcp_read_timeout, OPT_U64, 900)
 OPTION(ms_pq_max_tokens_per_priority, OPT_U64, 16777216)
@@ -226,6 +228,8 @@ OPTION(mon_mds_force_trim_to, OPT_INT, 0)   // force mon to trim mdsmaps to this
 // dump transactions
 OPTION(mon_debug_dump_transactions, OPT_BOOL, false)
 OPTION(mon_debug_dump_location, OPT_STR, "/var/log/ceph/$cluster-$name.tdump")
+OPTION(mon_inject_transaction_delay_max, OPT_DOUBLE, 10.0)      // seconds
+OPTION(mon_inject_transaction_delay_probability, OPT_DOUBLE, 0) // range [0, 1]
 
 OPTION(mon_sync_provider_kill_at, OPT_INT, 0)  // kill the sync provider at a specific point in the work flow
 OPTION(mon_sync_requester_kill_at, OPT_INT, 0) // kill the sync requester at a specific point in the work flow
@@ -302,6 +306,8 @@ OPTION(objecter_timeout, OPT_DOUBLE, 10.0)    // before we ask for a map
 OPTION(objecter_inflight_op_bytes, OPT_U64, 1024*1024*100) // max in-flight data (both directions)
 OPTION(objecter_inflight_ops, OPT_U64, 1024)               // max in-flight ios
 OPTION(objecter_completion_locks_per_session, OPT_U64, 32) // num of completion locks per each session, for serializing same object responses
+OPTION(objecter_inject_no_watch_ping, OPT_BOOL, false)   // suppress watch pings
+
 OPTION(journaler_allow_split_entries, OPT_BOOL, true)
 OPTION(journaler_write_head_interval, OPT_INT, 15)
 OPTION(journaler_prefetch_periods, OPT_INT, 10)   // * journal object size
@@ -408,6 +414,8 @@ OPTION(mds_snap_min_uid, OPT_U32, 0) // The minimum UID required to create a sna
 OPTION(mds_snap_max_uid, OPT_U32, 65536) // The maximum UID allowed to create a snapshot
 OPTION(mds_verify_backtrace, OPT_U32, 1)
 
+OPTION(mds_action_on_write_error, OPT_U32, 1) // 0: ignore; 1: force readonly; 2: crash
+
 // If true, compact leveldb store on mount
 OPTION(osd_compact_leveldb_on_mount, OPT_BOOL, false)
 
@@ -491,6 +499,7 @@ OPTION(osd_map_max_advance, OPT_INT, 200) // make this < cache_size!
 OPTION(osd_map_cache_size, OPT_INT, 500)
 OPTION(osd_map_message_max, OPT_INT, 100)  // max maps per MOSDMap message
 OPTION(osd_map_share_max_epochs, OPT_INT, 100)  // cap on # of inc maps we send to peers, clients
+OPTION(osd_inject_bad_map_crc_probability, OPT_FLOAT, 0)
 OPTION(osd_op_threads, OPT_INT, 2)    // 0 == no threading
 OPTION(osd_peering_wq_batch_size, OPT_U64, 20)
 OPTION(osd_op_pq_max_tokens_per_priority, OPT_U64, 4194304)
@@ -671,6 +680,8 @@ OPTION(osd_bench_large_size_max_throughput, OPT_U64, 100 << 20) // 100 MB/s
 OPTION(osd_bench_max_block_size, OPT_U64, 64 << 20) // cap the block size at 64MB
 OPTION(osd_bench_duration, OPT_U32, 30) // duration of 'osd bench', capped at 30s to avoid triggering timeouts
 
+OPTION(memstore_device_bytes, OPT_U32, 1024*1024*1024)
+
 OPTION(filestore_omap_backend, OPT_STR, "leveldb")
 
 OPTION(filestore_debug_disable_sharded_check, OPT_BOOL, false)
@@ -726,6 +737,7 @@ OPTION(filestore_btrfs_clone_range, OPT_BOOL, true)
 OPTION(filestore_zfs_snap, OPT_BOOL, false) // zfsonlinux is still unstable
 OPTION(filestore_fsync_flushes_journal_data, OPT_BOOL, false)
 OPTION(filestore_fiemap, OPT_BOOL, false)     // (try to) use fiemap
+OPTION(filestore_fadvise, OPT_BOOL, true)
 
 // (try to) use extsize for alloc hint
 // WARNING: extsize seems to trigger data corruption in xfs -- that is why it is
@@ -754,7 +766,6 @@ OPTION(filestore_dump_file, OPT_STR, "")         // file onto which store transa
 OPTION(filestore_kill_at, OPT_INT, 0)            // inject a failure at the n'th opportunity
 OPTION(filestore_inject_stall, OPT_INT, 0)       // artificially stall for N seconds in op queue thread
 OPTION(filestore_fail_eio, OPT_BOOL, true)       // fail/crash on EIO
-OPTION(filestore_replica_fadvise, OPT_BOOL, true)
 OPTION(filestore_debug_verify_split, OPT_BOOL, false)
 OPTION(journal_dio, OPT_BOOL, true)
 OPTION(journal_aio, OPT_BOOL, true)

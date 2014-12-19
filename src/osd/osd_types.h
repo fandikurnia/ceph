@@ -66,9 +66,13 @@ typedef hobject_t collection_list_handle_t;
 
 /// convert a single CPEH_OSD_FLAG_* to a string
 const char *ceph_osd_flag_name(unsigned flag);
+/// convert a single CEPH_OSD_OF_FLAG_* to a string
+const char *ceph_osd_op_flag_name(unsigned flag);
 
 /// convert CEPH_OSD_FLAG_* op flags to a string
 string ceph_osd_flag_string(unsigned flags);
+/// conver CEPH_OSD_OP_FLAG_* op flags to a string
+string ceph_osd_op_flag_string(unsigned flags);
 
 struct pg_shard_t {
   int32_t osd;
@@ -480,10 +484,6 @@ public:
     return coll_t(pg_to_tmp_str(pgid));
   }
 
-  static coll_t make_removal_coll(uint64_t seq, spg_t pgid) {
-    return coll_t(seq_to_removal_str(seq, pgid));
-  }
-
   const std::string& to_str() const {
     return str;
   }
@@ -521,11 +521,6 @@ private:
   static std::string pg_to_tmp_str(spg_t p) {
     std::ostringstream oss;
     oss << p << "_TEMP";
-    return oss.str();
-  }
-  static std::string seq_to_removal_str(uint64_t seq, spg_t pgid) {
-    std::ostringstream oss;
-    oss << "FORREMOVAL_" << seq << "_" << pgid;
     return oss.str();
   }
 
@@ -651,6 +646,11 @@ struct objectstore_perf_stat_t {
   objectstore_perf_stat_t() :
     filestore_commit_latency(0), filestore_apply_latency(0) {}
 
+  bool operator==(const objectstore_perf_stat_t &r) const {
+    return filestore_commit_latency == r.filestore_commit_latency &&
+      filestore_apply_latency == r.filestore_apply_latency;
+  }
+
   void add(const objectstore_perf_stat_t &o) {
     filestore_commit_latency += o.filestore_commit_latency;
     filestore_apply_latency += o.filestore_apply_latency;
@@ -714,7 +714,9 @@ inline bool operator==(const osd_stat_t& l, const osd_stat_t& r) {
     l.snap_trim_queue_len == r.snap_trim_queue_len &&
     l.num_snap_trimming == r.num_snap_trimming &&
     l.hb_in == r.hb_in &&
-    l.hb_out == r.hb_out;
+    l.hb_out == r.hb_out &&
+    l.op_queue_age_hist == r.op_queue_age_hist &&
+    l.fs_perf_stat == r.fs_perf_stat;
 }
 inline bool operator!=(const osd_stat_t& l, const osd_stat_t& r) {
   return !(l == r);
@@ -1293,12 +1295,9 @@ WRITE_CLASS_ENCODER(object_stat_sum_t)
  */
 struct object_stat_collection_t {
   object_stat_sum_t sum;
-  map<string,object_stat_sum_t> cat_sum;
 
   void calc_copies(int nrep) {
     sum.calc_copies(nrep);
-    for (map<string,object_stat_sum_t>::iterator p = cat_sum.begin(); p != cat_sum.end(); ++p)
-      p->second.calc_copies(nrep);
   }
 
   void dump(Formatter *f) const;
@@ -1307,43 +1306,26 @@ struct object_stat_collection_t {
   static void generate_test_instances(list<object_stat_collection_t*>& o);
 
   bool is_zero() const {
-    return (cat_sum.empty() && sum.is_zero());
+    return sum.is_zero();
   }
 
   void clear() {
     sum.clear();
-    cat_sum.clear();
   }
 
   void floor(int64_t f) {
     sum.floor(f);
-    for (map<string,object_stat_sum_t>::iterator p = cat_sum.begin(); p != cat_sum.end(); ++p)
-      p->second.floor(f);
   }
 
-  void add(const object_stat_sum_t& o, const string& cat) {
+  void add(const object_stat_sum_t& o) {
     sum.add(o);
-    if (cat.length())
-      cat_sum[cat].add(o);
   }
 
   void add(const object_stat_collection_t& o) {
     sum.add(o.sum);
-    for (map<string,object_stat_sum_t>::const_iterator p = o.cat_sum.begin();
-	 p != o.cat_sum.end();
-	 ++p)
-      cat_sum[p->first].add(p->second);
   }
   void sub(const object_stat_collection_t& o) {
     sum.sub(o.sum);
-    for (map<string,object_stat_sum_t>::const_iterator p = o.cat_sum.begin();
-	 p != o.cat_sum.end();
-	 ++p) {
-      object_stat_sum_t& s = cat_sum[p->first];
-      s.sub(p->second);
-      if (s.is_zero())
-	cat_sum.erase(p->first);
-    }
   }
 };
 WRITE_CLASS_ENCODER(object_stat_collection_t)
@@ -2509,7 +2491,6 @@ struct object_copy_data_t {
   bufferlist data;
   bufferlist omap_header;
   map<string, bufferlist> omap;
-  string category;
 
   /// which snaps we are defined for (if a snap and not the head)
   vector<snapid_t> snaps;
@@ -2746,8 +2727,6 @@ static inline ostream& operator<<(ostream& out, const notify_info_t& n) {
 
 struct object_info_t {
   hobject_t soid;
-  string category;
-
   eversion_t version, prior_version;
   version_t user_version;
   osd_reqid_t last_reqid;

@@ -828,12 +828,18 @@ function test_mon_osd()
   #
   # osd crush
   #
+  ceph osd crush reweight-all
   ceph osd crush tunables legacy
   ceph osd crush show-tunables | grep argonaut
   ceph osd crush tunables bobtail
   ceph osd crush show-tunables | grep bobtail
   ceph osd crush tunables firefly
   ceph osd crush show-tunables | grep firefly
+
+  ceph osd crush set-tunable straw_calc_version 0
+  ceph osd crush get-tunable straw_calc_version | grep 0
+  ceph osd crush set-tunable straw_calc_version 1
+  ceph osd crush get-tunable straw_calc_version | grep 1
 
   #
   # osd scrub
@@ -843,7 +849,7 @@ function test_mon_osd()
   ceph osd deep-scrub 0
   ceph osd repair 0
 
-  for f in noup nodown noin noout noscrub nodeep-scrub nobackfill norecover notieragent
+  for f in noup nodown noin noout noscrub nodeep-scrub nobackfill norecover notieragent full
   do
     ceph osd set $f
     ceph osd unset $f
