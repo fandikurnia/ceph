@@ -255,6 +255,9 @@ public:
   Messenger *messenger;  
   client_t whoami;
 
+  void set_cap_epoch_barrier(epoch_t e);
+  epoch_t cap_epoch_barrier;
+
   // mds sessions
   map<mds_rank_t, MetaSession*> mds_sessions;  // mds -> push seq
   list<Cond*> waiting_for_mdsmap;
@@ -332,6 +335,8 @@ protected:
   // cache
   ceph::unordered_map<vinodeno_t, Inode*> inode_map;
   Inode*                 root;
+  map<Inode*, Inode*>    root_parents;
+  Inode*                 root_ancestor;
   LRU                    lru;    // lru list of Dentry's in our local metadata cache.
 
   // all inodes with caps sit on either cap_list or delayed_caps.
@@ -399,7 +404,7 @@ protected:
   void put_inode(Inode *in, int n=1);
   void close_dir(Dir *dir);
 
-  friend class C_Client_PutInode; // calls put_inode()
+  friend class C_Client_FlushComplete; // calls put_inode()
   friend class C_Client_CacheInvalidate;  // calls ino_invalidate_cb
   friend class C_Client_DentryInvalidate;  // calls dentry_invalidate_cb
   friend class C_Block_Sync; // Calls block map and protected helpers
@@ -429,10 +434,15 @@ protected:
   void trim_cache_for_reconnect(MetaSession *s);
   void trim_dentry(Dentry *dn);
   void trim_caps(MetaSession *s, int max);
-  void _invalidate_kernel_dcache();
+  void _invalidate_kernel_dcache(MetaSession *s);
   
   void dump_inode(Formatter *f, Inode *in, set<Inode*>& did, bool disconnected);
   void dump_cache(Formatter *f);  // debug
+
+  // force read-only
+  void force_session_readonly(MetaSession *s);
+
+  void dump_status(Formatter *f);  // debug
   
   // trace generation
   ofstream traceout;
@@ -451,6 +461,13 @@ protected:
   bool ms_get_authorizer(int dest_type, AuthAuthorizer **authorizer, bool force_new);
 
   int authenticate();
+
+  void put_qtree(Inode *in);
+  void invalidate_quota_tree(Inode *in);
+  Inode* get_quota_root(Inode *in);
+  bool is_quota_files_exceeded(Inode *in);
+  bool is_quota_bytes_exceeded(Inode *in, uint64_t new_bytes);
+  bool is_quota_bytes_approaching(Inode *in);
 
  public:
   void set_filer_flags(int flags);
@@ -472,6 +489,7 @@ protected:
 
   // messaging
   void handle_mds_map(class MMDSMap *m);
+  void handle_osd_map(class MOSDMap *m);
 
   void handle_lease(MClientLease *m);
 
@@ -498,6 +516,7 @@ protected:
   void maybe_update_snaprealm(SnapRealm *realm, snapid_t snap_created, snapid_t snap_highwater, 
 			      vector<snapid_t>& snaps);
 
+  void handle_quota(struct MClientQuota *m);
   void handle_snap(struct MClientSnap *m);
   void handle_caps(class MClientCaps *m);
   void handle_cap_import(MetaSession *session, Inode *in, class MClientCaps *m);
@@ -539,7 +558,7 @@ protected:
    * 
    * @returns true if the data was already flushed, false otherwise.
    */
-  bool _flush(Inode *in, Context *c=NULL);
+  bool _flush(Inode *in, Context *c);
   void _flush_range(Inode *in, int64_t off, uint64_t size);
   void _flushed(Inode *in);
   void flush_set_callback(ObjectCacher::ObjectSet *oset);
@@ -660,6 +679,11 @@ private:
 	  bool readonly, hidden;
 	  bool (Client::*exists_cb)(Inode *in);
   };
+
+  bool _vxattrcb_quota_exists(Inode *in);
+  size_t _vxattrcb_quota(Inode *in, char *val, size_t size);
+  size_t _vxattrcb_quota_max_bytes(Inode *in, char *val, size_t size);
+  size_t _vxattrcb_quota_max_files(Inode *in, char *val, size_t size);
 
   bool _vxattrcb_layout_exists(Inode *in);
   size_t _vxattrcb_layout(Inode *in, char *val, size_t size);

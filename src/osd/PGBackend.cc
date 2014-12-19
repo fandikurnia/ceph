@@ -137,6 +137,9 @@ int PGBackend::objects_list_partial(
     for (vector<ghobject_t>::iterator i = objects.begin();
 	 i != objects.end();
 	 ++i) {
+      if (i->is_pgmeta()) {
+	continue;
+      }
       if (i->is_no_gen()) {
 	ls->push_back(i->hobj);
       }
@@ -166,6 +169,9 @@ int PGBackend::objects_list_range(
   for (vector<ghobject_t>::iterator i = objects.begin();
        i != objects.end();
        ++i) {
+    if (i->is_pgmeta()) {
+      continue;
+    }
     if (i->is_no_gen()) {
       ls->push_back(i->hobj);
     } else if (gen_obs) {
@@ -552,13 +558,13 @@ void PGBackend::be_compare_scrubmaps(
 	    ++shallow_errors;
           else
 	    ++deep_errors;
-	  errorstream << pgid << " shard " << j->first
+	  errorstream << __func__ << ": " << pgid << " shard " << j->first
 		      << ": soid " << *k << " " << ss.str() << std::endl;
 	}
       } else {
 	cur_missing.insert(j->first);
 	++shallow_errors;
-	errorstream << pgid << " shard " << j->first
+	errorstream << __func__ << ": " << pgid << " shard " << j->first
 		    << " missing " << *k << std::endl;
       }
     }

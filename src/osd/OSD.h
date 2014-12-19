@@ -315,7 +315,6 @@ public:
   LogClient &log_client;
   LogChannelRef clog;
   PGRecoveryStats &pg_recovery_stats;
-  hobject_t infos_oid;
 private:
   Messenger *&cluster_messenger;
   Messenger *&client_messenger;
@@ -1897,18 +1896,18 @@ protected:
   void repeer(PG *pg, map< int, map<spg_t,pg_query_t> >& query_map);
 
   bool require_mon_peer(Message *m);
-  bool require_osd_peer(OpRequestRef& op);
+  bool require_osd_peer(Message *m);
   /***
    * Verifies that we were alive in the given epoch, and that
    * still are.
    */
-  bool require_self_aliveness(OpRequestRef& op, epoch_t alive_since);
+  bool require_self_aliveness(Message *m, epoch_t alive_since);
   /**
    * Verifies that the OSD who sent the given op has the same
    * address as in the given map.
    * @pre op was sent by an OSD using the cluster messenger
    */
-  bool require_same_peer_instance(OpRequestRef& op, OSDMapRef& map,
+  bool require_same_peer_instance(Message *m, OSDMapRef& map,
 				  bool is_fast_dispatch);
 
   bool require_same_or_newer_map(OpRequestRef& op, epoch_t e,
@@ -2267,10 +2266,6 @@ protected:
       remove_queue.clear();
     }
   } remove_wq;
-  uint64_t next_removal_seq;
-  coll_t get_next_removal_coll(spg_t pgid) {
-    return coll_t::make_removal_coll(next_removal_seq++, pgid);
-  }
 
  private:
   bool ms_can_fast_dispatch_any() const { return true; }
