@@ -8126,7 +8126,10 @@ void OSD::ShardedOpWQ::_process(uint32_t thread_index, heartbeat_handle_d *hb ) 
 
   {
 #ifdef WITH_LTTNG
-    osd_reqid_t reqid = op->get_reqid();
+    osd_reqid_t reqid;
+    if (boost::optional<OpRequestRef> _op = op->maybe_get_op()) {
+      reqid = (*_op)->get_reqid();
+    }
 #endif
     tracepoint(osd, opwq_process_finish, reqid.name._type,
         reqid.name._num, reqid.tid, reqid.inc);
