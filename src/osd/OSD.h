@@ -400,7 +400,6 @@ public:
   LogClient &log_client;
   LogChannelRef clog;
   PGRecoveryStats &pg_recovery_stats;
-  hobject_t infos_oid;
 private:
   Messenger *&cluster_messenger;
   Messenger *&client_messenger;
@@ -2283,10 +2282,6 @@ protected:
       remove_queue.clear();
     }
   } remove_wq;
-  uint64_t next_removal_seq;
-  coll_t get_next_removal_coll(spg_t pgid) {
-    return coll_t::make_removal_coll(next_removal_seq++, pgid);
-  }
 
  private:
   bool ms_can_fast_dispatch_any() const { return true; }

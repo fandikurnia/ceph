@@ -2,6 +2,184 @@
  Release Notes
 ===============
 
+v0.90
+=====
+
+This is the last development release before Christmas.  There are some
+API cleanups for librados and librbd, and lots of bug fixes across the
+board for the OSD, MDS, RGW, and CRUSH.  The OSD also gets support for
+discard (potentially helpful on SSDs, although it is off by default), and there
+are several improvements to ceph-disk.
+
+The next two development releases will be getting a slew of new
+functionality for hammer.  Stay tuned!
+
+Upgrading
+---------
+
+* Previously, the formatted output of 'ceph pg stat -f ...' was a full
+  pg dump that included all metadata about all PGs in the system.  It
+  is now a concise summary of high-level PG stats, just like the
+  unformatted 'ceph pg stat' command.
+
+* All JSON dumps of floating point values were incorrecting surrounding the
+  value with quotes.  These quotes have been removed.  Any consumer of structured
+  JSON output that was consuming the floating point values was previously having
+  to interpret the quoted string and will most likely need to be fixed to take
+  the unquoted number.
+
+Notable Changes
+---------------
+
+* arch: fix NEON feaeture detection (#10185 Loic Dachary)
+* build: adjust build deps for yasm, virtualenv (Jianpeng Ma)
+* build: improve build dependency tooling (Loic Dachary)
+* ceph-disk: call partx/partprobe consistency (#9721 Loic Dachary)
+* ceph-disk: fix dmcrypt key permissions (Loic Dachary)
+* ceph-disk: fix umount race condition (#10096 Blaine Gardner)
+* ceph-disk: init=none option (Loic Dachary)
+* ceph-monstore-tool: fix shutdown (#10093 Loic Dachary)
+* ceph-objectstore-tool: fix import (#10090 David Zafman)
+* ceph-objectstore-tool: many improvements and tests (David Zafman)
+* ceph.spec: package rbd-replay-prep (Ken Dreyer)
+* common: add 'perf reset ...' admin command (Jianpeng Ma)
+* common: do not unlock rwlock on destruction (Federico Simoncelli)
+* common: fix block device discard check (#10296 Sage Weil)
+* common: remove broken CEPH_LOCKDEP optoin (Kefu Chai)
+* crush: fix tree bucket behavior (Rongze Zhu)
+* doc: add build-doc guidlines for Fedora and CentOS/RHEL (Nilamdyuti Goswami)
+* doc: enable rbd cache on openstack deployments (Sebastien Han)
+* doc: improved installation nots on CentOS/RHEL installs (John Wilkins)
+* doc: misc cleanups (Adam Spiers, Sebastien Han, Nilamdyuti Goswami, Ken Dreyer, John Wilkins)
+* doc: new man pages (Nilamdyuti Goswami)
+* doc: update release descriptions (Ken Dreyer)
+* doc: update sepia hardware inventory (Sandon Van Ness)
+* librados: only export public API symbols (Jason Dillaman)
+* libradosstriper: fix stat strtoll (Dongmao Zhang)
+* libradosstriper: fix trunc method (#10129 Sebastien Ponce)
+* librbd: fix list_children from invalid pool ioctxs (#10123 Jason Dillaman)
+* librbd: only export public API symbols (Jason Dillaman)
+* many coverity fixes (Danny Al-Gaaf)
+* mds: 'flush journal' admin command (John Spray)
+* mds: fix MDLog IO callback deadlock (John Spray)
+* mds: fix deadlock during journal probe vs purge (#10229 Yan, Zheng)
+* mds: fix race trimming log segments (Yan, Zheng)
+* mds: store backtrace for stray dir (Yan, Zheng)
+* mds: verify backtrace when fetching dirfrag (#9557 Yan, Zheng)
+* mon: add max pgs per osd warning (Sage Weil)
+* mon: fix *_ratio units and types (Sage Weil)
+* mon: fix JSON dumps to dump floats as flots and not strings (Sage Weil)
+* mon: fix formatter 'pg stat' command output (Sage Weil)
+* msgr: async: several fixes (Haomai Wang)
+* msgr: simple: fix rare deadlock (Greg Farnum)
+* osd: batch pg log trim (Xinze Chi)
+* osd: clean up internal ObjectStore interface (Sage Weil)
+* osd: do not abort deep scrub on missing hinfo (#10018 Loic Dachary)
+* osd: fix ghobject_t formatted output to include shard (#10063 Loic Dachary)
+* osd: fix osd peer check on scrub messages (#9555 Sage Weil)
+* osd: fix pgls filter ops (#9439 David Zafman)
+* osd: flush snapshots from cache tier immediately (Sage Weil)
+* osd: keyvaluestore: fix getattr semantics (Haomai Wang)
+* osd: keyvaluestore: fix key ordering (#10119 Haomai Wang)
+* osd: limit in-flight read requests (Jason Dillaman)
+* osd: log when scrub or repair starts (Loic Dachary)
+* osd: support for discard for journal trim (Jianpeng Ma)
+* qa: fix osd create dup tests (#10083 Loic Dachary)
+* rgw: add location header when object is in another region (VRan Liu)
+* rgw: check timestamp on s3 keystone auth (#10062 Abhishek Lekshmanan)
+* rgw: make sysvinit script set ulimit -n properly (Sage Weil)
+* systemd: better systemd unit files (Owen Synge)
+* tests: ability to run unit tests under docker (Loic Dachary)
+
+
+v0.89
+=====
+
+This is the second development release since Giant.  The big items
+include the first batch of scrub patchs from Greg for CephFS, a rework
+in the librados object listing API to properly handle namespaces, and
+a pile of bug fixes for RGW.  There are also several smaller issues
+fixed up in the performance area with buffer alignment and memory
+copies, osd cache tiering agent, and various CephFS fixes.
+
+Upgrading
+---------
+
+* New ability to list all objects from all namespaces can fail or
+  return incomplete results when not all OSDs have been upgraded.
+  Features rados --all ls, rados cppool, rados export, rados
+  cache-flush-evict-all and rados cache-try-flush-evict-all can also
+  fail or return incomplete results.
+
+Notable Changes
+---------------
+
+* buffer: add list::get_contiguous (Sage Weil)
+* buffer: avoid rebuild if buffer already contiguous (Jianpeng Ma)
+* ceph-disk: improved systemd support (Owen Synge)
+* ceph-disk: set guid if reusing journal partition (Dan van der Ster)
+* ceph-fuse, libcephfs: allow xattr caps in inject_release_failure (#9800 John Spray)
+* ceph-fuse, libcephfs: fix I_COMPLETE_ORDERED checks (#9894 Yan, Zheng)
+* ceph-fuse: fix dentry invalidation on 3.18+ kernels (#9997 Yan, Zheng)
+* crush: fix detach_bucket (#10095 Sage Weil)
+* crush: fix several bugs in adjust_item_weight (Rongze Zhu)
+* doc: add dumpling to firefly upgrade section (#7679 John Wilkins)
+* doc: document erasure coded pool operations (#9970 Loic Dachary)
+* doc: file system osd config settings (Kevin Dalley)
+* doc: key/value store config reference (John Wilkins)
+* doc: update openstack docs for Juno (Sebastien Han)
+* fix cluster logging from non-mon daemons (Sage Weil)
+* init-ceph: check for systemd-run before using it (Boris Ranto)
+* librados: fix infinite loop with skipped map epochs (#9986 Ding Dinghua)
+* librados: fix iterator operator= bugs (#10082 David Zafman, Yehuda Sadeh)
+* librados: fix null deref when pool DNE (#9944 Sage Weil)
+* librados: fix timer race from recent refactor (Sage Weil)
+* libradosstriper: fix shutdown hang (Dongmao Zhang)
+* librbd: don't close a closed parent in failure path (#10030 Jason Dillaman)
+* librbd: fix diff test (#10002 Josh Durgin)
+* librbd: fix locking for readahead (#10045 Jason Dillaman)
+* librbd: refactor unit tests to use fixtures (Jason Dillaman)
+* many many coverity cleanups (Danny Al-Gaaf)
+* mds: a whole bunch of initial scrub infrastructure (Greg Farnum)
+* mds: fix compat_version for MClientSession (#9945 John Spray)
+* mds: fix reply snapbl (Yan, Zheng)
+* mon: allow adding tiers to fs pools (#10135 John Spray)
+* mon: fix MDS health status from peons (#10151 John Spray)
+* mon: fix caching for min_last_epoch_clean (#9987 Sage Weil)
+* mon: fix error output for add_data_pool (#9852 Joao Eduardo Luis)
+* mon: include entity name in audit log for forwarded requests (#9913 Joao Eduardo Luis)
+* mon: paxos: allow reads while proposing (#9321 #9322 Joao Eduardo Luis)
+* msgr: asyncmessenger: add kqueue support (#9926 Haomai Wang)
+* osd, librados: revamp PG listing API to handle namespaces (#9031 #9262 #9438 David Zafman)
+* osd, mon: send intiial pg create time from mon to osd (#9887 David Zafman)
+* osd: allow whiteout deletion in cache pool (Sage Weil)
+* osd: cache pool: ignore min flush age when cache is full (Xinze Chi)
+* osd: erasure coding: allow bench.sh to test ISA backend (Yuan Zhou)
+* osd: erasure-code: encoding regression tests, corpus (#9420 Loic Dachary)
+* osd: fix journal shutdown race (Sage Weil)
+* osd: fix object age eviction (Zhiqiang Wang)
+* osd: fix object atime calculation (Xinze Chi)
+* osd: fix past_interval display bug (#9752 Loic Dachary)
+* osd: journal: fix alignment checks, avoid useless memmove (Jianpeng Ma)
+* osd: journal: update committed_thru after replay (#6756 Samuel Just)
+* osd: keyvaluestore_dev: optimization (Chendi Xue)
+* osd: make misdirected op checks robust for EC pools (#9835 Sage Weil)
+* osd: removed some dead code (Xinze Chi)
+* qa: parallelize make check (Loic Dachary)
+* qa: tolerate nearly-full disk for make check (Loic Dachary)
+* rgw: create subuser if needed when creating user (#10103 Yehuda Sadeh)
+* rgw: fix If-Modified-Since (VRan Liu)
+* rgw: fix content-length update (#9576 Yehuda Sadeh)
+* rgw: fix disabling of max_size quota (#9907 Dong Lei)
+* rgw: fix incorrect len when len is 0 (#9877 Yehuda Sadeh)
+* rgw: fix object copy content type (#9478 Yehuda Sadeh)
+* rgw: fix user stags in get-user-info API (#9359 Ray Lv)
+* rgw: remove swift user manifest (DLO) hash calculation (#9973 Yehuda Sadeh)
+* rgw: return timestamp on GET/HEAD (#8911 Yehuda Sadeh)
+* rgw: set ETag on object copy (#9479 Yehuda Sadeh)
+* rgw: update bucket index on attr changes, for multi-site sync (#5595 Yehuda Sadeh)
+
+
 v0.88
 =====
 
